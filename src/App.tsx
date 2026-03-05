@@ -1,13 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, useMotionValue, useSpring, useScroll, useTransform } from 'motion/react';
 import { ArrowUpRight, Linkedin, BookOpen, Briefcase, HardHat, Hammer, Terminal } from 'lucide-react';
 
 const CustomCursor = () => {
   const [isHovering, setIsHovering] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
 
   useEffect(() => {
+    // Detect touch/mobile devices and hide cursor
+    setIsMobile(
+      window.matchMedia('(pointer: coarse)').matches ||
+      'ontouchstart' in window
+    );
+  }, []);
+
+  useEffect(() => {
+    if (isMobile) return;
+
     const updateMousePosition = (e: MouseEvent) => {
       mouseX.set(e.clientX);
       mouseY.set(e.clientY);
@@ -28,14 +39,16 @@ const CustomCursor = () => {
       window.removeEventListener('mousemove', updateMousePosition);
       window.removeEventListener('mouseover', handleMouseOver);
     };
-  }, []);
+  }, [isMobile]);
 
   const cursorX = useSpring(mouseX, { stiffness: 500, damping: 28 });
   const cursorY = useSpring(mouseY, { stiffness: 500, damping: 28 });
 
+  // Don't render anything on mobile
+  if (isMobile) return null;
+
   return (
     <>
-      {/* Primary Cursor — actual arrow shape with rounded edges */}
       <motion.div
         className="fixed top-0 left-0 pointer-events-none z-[100] mix-blend-difference"
         style={{
@@ -62,6 +75,167 @@ const CustomCursor = () => {
         </svg>
       </motion.div>
     </>
+  );
+};
+
+/* ─── Gyroscope-driven hero text (mobile only) ─── */
+type GyroState = 'idle' | 'scattered';
+
+interface WordDef {
+  text: string;
+  special?: boolean; // The outline-stroked "domain" word
+}
+
+const HERO_LINES: { words: WordDef[]; br: boolean }[] = [
+  { words: [{ text: 'I' }, { text: 'bought' }, { text: 'this' }], br: true },
+  { words: [{ text: 'domain', special: true }, { text: 'because' }], br: true },
+  { words: [{ text: "it's" }, { text: 'my' }, { text: 'surname.' }], br: false },
+];
+
+const ALL_WORDS = HERO_LINES.flatMap((l) => l.words);
+
+const randomScatter = () =>
+  ALL_WORDS.map(() => ({
+    x: (Math.random() - 0.5) * 160,
+    y: (Math.random() - 0.5) * 80,
+    rotate: (Math.random() - 0.5) * 45,
+  }));
+
+const GyroText = () => {
+  const [gyroState, setGyroState] = useState<GyroState>('idle');
+  const [hasGyro, setHasGyro] = useState(false);
+  const [permissionGranted, setPermissionGranted] = useState(false);
+  const [orientation, setOrientation] = useState({ beta: 0, gamma: 0 });
+  const [scattered, setScattered] = useState(() => randomScatter());
+
+  const lastRef = useRef({ beta: 0, gamma: 0 });
+  const bufferRef = useRef<number[]>([]);
+  const shakeStartRef = useRef<number | null>(null);
+  const stateRef = useRef<GyroState>('idle');
+
+  // Keep ref in sync with state so the event handler always sees the latest
+  useEffect(() => { stateRef.current = gyroState; }, [gyroState]);
+
+  /* ── Detect gyroscope support ── */
+  useEffect(() => {
+    const supported = 'DeviceOrientationEvent' in window;
+    setHasGyro(supported);
+    // Auto-grant on Android (no permission API)
+    if (supported && typeof (DeviceOrientationEvent as any).requestPermission !== 'function') {
+      setPermissionGranted(true);
+    }
+  }, []);
+
+  /* ── iOS permission on tap ── */
+  const requestPermission = useCallback(async () => {
+    if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+      try {
+        const perm = await (DeviceOrientationEvent as any).requestPermission();
+        if (perm === 'granted') setPermissionGranted(true);
+      } catch { /* user denied */ }
+    }
+  }, []);
+
+  /* ── Listen to gyroscope ── */
+  useEffect(() => {
+    if (!hasGyro || !permissionGranted) return;
+
+    const onOrientation = (e: DeviceOrientationEvent) => {
+      const beta = e.beta || 0;
+      const gamma = e.gamma || 0;
+
+      // Dampened orientation for gentle parallax
+      setOrientation({ beta: beta * 0.4, gamma: gamma * 0.4 });
+
+      // Calculate instantaneous shake intensity
+      const dB = Math.abs(beta - lastRef.current.beta);
+      const dG = Math.abs(gamma - lastRef.current.gamma);
+      lastRef.current = { beta, gamma };
+
+      const intensity = dB + dG;
+      const buf = bufferRef.current;
+      buf.push(intensity);
+      if (buf.length > 40) buf.shift(); // ~0.6-0.8s rolling window
+      const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+
+      const SHAKE_THRESHOLD = 12;
+
+      if (avg > SHAKE_THRESHOLD) {
+        if (stateRef.current === 'scattered') {
+          // Any shake in scattered → snap back to idle
+          setGyroState('idle');
+          shakeStartRef.current = null;
+          bufferRef.current = [];
+        } else {
+          // In idle, accumulate shake time
+          if (!shakeStartRef.current) {
+            shakeStartRef.current = Date.now();
+          } else if (Date.now() - shakeStartRef.current > 4000) {
+            // 4 seconds of aggressive shaking → scatter!
+            setScattered(randomScatter());
+            setGyroState('scattered');
+            shakeStartRef.current = null;
+            bufferRef.current = [];
+          }
+        }
+      } else {
+        // Not shaking aggressively — reset timer
+        if (stateRef.current === 'idle') {
+          shakeStartRef.current = null;
+        }
+      }
+    };
+
+    window.addEventListener('deviceorientation', onOrientation);
+    return () => window.removeEventListener('deviceorientation', onOrientation);
+  }, [hasGyro, permissionGranted]);
+
+  /* ── Render words ── */
+  let wordIdx = 0;
+
+  return (
+    <h3
+      className="font-display text-5xl md:text-7xl lg:text-[7rem] font-black leading-[0.9] tracking-tighter mb-8 uppercase"
+      onClick={!permissionGranted ? requestPermission : undefined}
+    >
+      {HERO_LINES.map((line, li) => (
+        <React.Fragment key={li}>
+          {line.words.map((w) => {
+            const idx = wordIdx++;
+            const isScattered = gyroState === 'scattered';
+
+            // Per-word parallax factor (increases with index for depth)
+            const factor = (idx + 1) * 0.6;
+            const idleX = hasGyro && permissionGranted ? orientation.gamma * factor : 0;
+            const idleY = hasGyro && permissionGranted ? orientation.beta * factor * 0.3 : 0;
+
+            return (
+              <motion.span
+                key={idx}
+                className={`inline-block ${w.special
+                    ? 'text-transparent [-webkit-text-stroke:1px_#f0f0f0] hover:[-webkit-text-stroke:2px_#CCFF00] transition-all duration-300'
+                    : ''
+                  }`}
+                style={{ marginRight: '0.25em' }}
+                animate={{
+                  x: isScattered ? scattered[idx].x : idleX,
+                  y: isScattered ? scattered[idx].y : idleY,
+                  rotate: isScattered ? scattered[idx].rotate : 0,
+                }}
+                transition={
+                  isScattered
+                    ? { type: 'spring', stiffness: 120, damping: 14 }
+                    : { type: 'tween', duration: 0.12, ease: 'easeOut' }
+                }
+              >
+                {w.text}
+              </motion.span>
+            );
+          })}
+          {line.br && <br />}
+        </React.Fragment>
+      ))}
+    </h3>
   );
 };
 
@@ -201,11 +375,7 @@ export default function App() {
               <span>~/kaintura.com/init.sh</span>
             </div>
 
-            <h3 className="font-display text-5xl md:text-7xl lg:text-[7rem] font-black leading-[0.9] tracking-tighter mb-8 uppercase">
-              I bought this<br />
-              <span className="text-transparent [-webkit-text-stroke:1px_#f0f0f0] hover:[-webkit-text-stroke:2px_#CCFF00] transition-all duration-300 cursor-default">domain</span> because<br />
-              it's my surname.
-            </h3>
+            <GyroText />
 
             <div className="font-mono text-sm md:text-base text-white/60 max-w-xl leading-relaxed space-y-4 border-l-2 border-[#CCFF00] pl-6">
               <p>

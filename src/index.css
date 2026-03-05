@@ -33,3 +33,10 @@ body {
 a, button {
   cursor: none;
 }
+
+/* Restore default cursor on touch/mobile devices */
+@media (pointer: coarse), (hover: none) {
+  body, a, button {
+    cursor: auto !important;
+  }
+}
