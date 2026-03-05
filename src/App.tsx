@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, useSpring, useScroll, useTransform } from 'motion/react';
+import { motion, useMotionValue, useSpring, useScroll, useTransform } from 'motion/react';
 import { ArrowUpRight, Linkedin, BookOpen, Briefcase, HardHat, Hammer, Terminal } from 'lucide-react';
 
 const CustomCursor = () => {
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isHovering, setIsHovering] = useState(false);
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
 
   useEffect(() => {
     const updateMousePosition = (e: MouseEvent) => {
-      setMousePosition({ x: e.clientX, y: e.clientY });
+      mouseX.set(e.clientX);
+      mouseY.set(e.clientY);
     };
 
     const handleMouseOver = (e: MouseEvent) => {
@@ -28,32 +30,37 @@ const CustomCursor = () => {
     };
   }, []);
 
-  const cursorX = useSpring(mousePosition.x, { stiffness: 500, damping: 28 });
-  const cursorY = useSpring(mousePosition.y, { stiffness: 500, damping: 28 });
+  const cursorX = useSpring(mouseX, { stiffness: 500, damping: 28 });
+  const cursorY = useSpring(mouseY, { stiffness: 500, damping: 28 });
 
   return (
     <>
+      {/* Primary Cursor — actual arrow shape with rounded edges */}
       <motion.div
-        className="fixed top-0 left-0 w-3 h-3 bg-[#CCFF00] rounded-full pointer-events-none z-[100] mix-blend-difference"
+        className="fixed top-0 left-0 pointer-events-none z-[100] mix-blend-difference"
         style={{
           x: cursorX,
           y: cursorY,
-          translateX: '-50%',
-          translateY: '-50%',
-          scale: isHovering ? 4 : 1,
+          scale: isHovering ? 1.4 : 1,
         }}
-      />
-      <motion.div
-        className="fixed top-0 left-0 w-10 h-10 border border-[#CCFF00] rounded-full pointer-events-none z-[99] mix-blend-difference"
-        style={{
-          x: useSpring(mousePosition.x, { stiffness: 150, damping: 20 }),
-          y: useSpring(mousePosition.y, { stiffness: 150, damping: 20 }),
-          translateX: '-50%',
-          translateY: '-50%',
-          opacity: isHovering ? 0 : 1,
-          scale: isHovering ? 0.5 : 1,
-        }}
-      />
+      >
+        <svg
+          width="36"
+          height="42"
+          viewBox="0 0 24 28"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M2 1.5 L2 22 L7.5 16.5 L12.5 25 L16 23 L11 14.5 L18.5 14.5 Z"
+            fill="white"
+            stroke="white"
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        </svg>
+      </motion.div>
     </>
   );
 };
@@ -108,7 +115,7 @@ const LinkItem = ({ href, icon: Icon, label, index }: { href: string, icon: any,
           {label}
         </span>
       </div>
-      
+
       <div className="z-10 overflow-hidden">
         <motion.div
           className="w-12 h-12 rounded-full bg-transparent border border-white/20 flex items-center justify-center group-hover:bg-black group-hover:border-black transition-all duration-500"
@@ -151,10 +158,10 @@ export default function App() {
       <CustomCursor />
 
       <main className="relative min-h-screen flex flex-col justify-between p-6 md:p-12 lg:p-16 max-w-[1600px] mx-auto">
-        
+
         {/* Header */}
         <header className="flex justify-between items-start z-20">
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.2 }}
@@ -164,11 +171,11 @@ export default function App() {
               <h2 className="font-mono text-xs text-[#CCFF00] tracking-[0.2em] uppercase">Status: Building</h2>
             </div>
             <h1 className="font-display text-3xl md:text-5xl font-black tracking-tighter leading-none">
-              AVIRAL<br/>KAINTURA
+              AVIRAL<br />KAINTURA
             </h1>
           </motion.div>
-          
-          <motion.div 
+
+          <motion.div
             initial={{ scale: 0, rotate: -180 }}
             animate={{ scale: 1, rotate: 0 }}
             transition={{ type: "spring", stiffness: 200, damping: 20, delay: 0.5 }}
@@ -193,13 +200,13 @@ export default function App() {
               <Terminal size={14} className="text-[#CCFF00]" />
               <span>~/kaintura.com/init.sh</span>
             </div>
-            
+
             <h3 className="font-display text-5xl md:text-7xl lg:text-[7rem] font-black leading-[0.9] tracking-tighter mb-8 uppercase">
-              I bought this<br/>
-              <span className="text-transparent [-webkit-text-stroke:1px_#f0f0f0] hover:[-webkit-text-stroke:2px_#CCFF00] transition-all duration-300 cursor-default">domain</span> because<br/>
+              I bought this<br />
+              <span className="text-transparent [-webkit-text-stroke:1px_#f0f0f0] hover:[-webkit-text-stroke:2px_#CCFF00] transition-all duration-300 cursor-default">domain</span> because<br />
               it's my surname.
             </h3>
-            
+
             <div className="font-mono text-sm md:text-base text-white/60 max-w-xl leading-relaxed space-y-4 border-l-2 border-[#CCFF00] pl-6">
               <p>
                 <span className="text-[#CCFF00]">&gt;</span> Currently engineering the actual landing page.
@@ -213,18 +220,18 @@ export default function App() {
 
         {/* Links Section */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-end z-20 pb-24 md:pb-0">
-          <motion.div 
+          <motion.div
             className="lg:col-span-4 font-mono text-xs text-white/40 uppercase tracking-widest leading-loose"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 1 }}
           >
             <div className="mb-4">
-              <span className="text-[#CCFF00]">Location:</span> Internet<br/>
-              <span className="text-[#CCFF00]">Role:</span> Frontend Wizard<br/>
+              <span className="text-[#CCFF00]">Location:</span> Internet<br />
+              <span className="text-[#CCFF00]">Role:</span> Frontend Wizard<br />
               <span className="text-[#CCFF00]">Vibe:</span> Greedy for good design
             </div>
-            © {new Date().getFullYear()} Kaintura.com<br/>
+            © {new Date().getFullYear()} Kaintura.com<br />
             All rights reserved (mostly)
           </motion.div>
 
@@ -236,7 +243,7 @@ export default function App() {
         </div>
 
         {/* Background massive text */}
-        <motion.div 
+        <motion.div
           className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full text-center pointer-events-none z-0 opacity-[0.02] mix-blend-overlay"
           style={{ y }}
         >
