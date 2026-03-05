@@ -79,23 +79,31 @@ const CustomCursor = () => {
 };
 
 /* ─── Gyroscope-driven hero text (mobile only) ─── */
-type GyroState = 'idle' | 'scattered';
+type GyroState = 'idle' | 'warning' | 'scattered';
 
 interface WordDef {
   text: string;
-  special?: boolean; // The outline-stroked "domain" word
+  special?: boolean; // The outline-stroked style (used for "domain" and "shaking")
 }
 
+// Original hero text
 const HERO_LINES: { words: WordDef[]; br: boolean }[] = [
   { words: [{ text: 'I' }, { text: 'bought' }, { text: 'this' }], br: true },
   { words: [{ text: 'domain', special: true }, { text: 'because' }], br: true },
   { words: [{ text: "it's" }, { text: 'my' }, { text: 'surname.' }], br: false },
 ];
 
-const ALL_WORDS = HERO_LINES.flatMap((l) => l.words);
+// Warning text — "shaking" gets the special outline style like "domain"
+const WARNING_LINES: { words: WordDef[]; br: boolean }[] = [
+  { words: [{ text: 'stop' }], br: true },
+  { words: [{ text: 'shaking', special: true }], br: true },
+  { words: [{ text: 'your' }, { text: 'screen' }], br: false },
+];
+
+const ALL_HERO_WORDS = HERO_LINES.flatMap((l) => l.words);
 
 const randomScatter = () =>
-  ALL_WORDS.map(() => ({
+  ALL_HERO_WORDS.map(() => ({
     x: (Math.random() - 0.5) * 160,
     y: (Math.random() - 0.5) * 80,
     rotate: (Math.random() - 0.5) * 45,
@@ -110,33 +118,34 @@ const GyroText = () => {
 
   const lastRef = useRef({ beta: 0, gamma: 0 });
   const bufferRef = useRef<number[]>([]);
-  const shakeStartRef = useRef<number | null>(null);
+  const rotateStartRef = useRef<number | null>(null);    // Timer for idle→warning (4s gentle rotation)
+  const warningShakeRef = useRef<number | null>(null);    // Timer for warning→scattered (continued shaking)
+  const calmTimerRef = useRef<number | null>(null);       // Timer for warning→idle (stop shaking)
   const stateRef = useRef<GyroState>('idle');
 
-  // Keep ref in sync with state so the event handler always sees the latest
+  // Keep ref in sync
   useEffect(() => { stateRef.current = gyroState; }, [gyroState]);
 
-  /* ── Detect gyroscope support ── */
+  /* ── Detect gyroscope ── */
   useEffect(() => {
     const supported = 'DeviceOrientationEvent' in window;
     setHasGyro(supported);
-    // Auto-grant on Android (no permission API)
     if (supported && typeof (DeviceOrientationEvent as any).requestPermission !== 'function') {
       setPermissionGranted(true);
     }
   }, []);
 
-  /* ── iOS permission on tap ── */
+  /* ── iOS permission ── */
   const requestPermission = useCallback(async () => {
     if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
       try {
         const perm = await (DeviceOrientationEvent as any).requestPermission();
         if (perm === 'granted') setPermissionGranted(true);
-      } catch { /* user denied */ }
+      } catch { /* denied */ }
     }
   }, []);
 
-  /* ── Listen to gyroscope ── */
+  /* ── Gyroscope listener ── */
   useEffect(() => {
     if (!hasGyro || !permissionGranted) return;
 
@@ -144,10 +153,9 @@ const GyroText = () => {
       const beta = e.beta || 0;
       const gamma = e.gamma || 0;
 
-      // Dampened orientation for gentle parallax
       setOrientation({ beta: beta * 0.4, gamma: gamma * 0.4 });
 
-      // Calculate instantaneous shake intensity
+      // Instantaneous movement delta
       const dB = Math.abs(beta - lastRef.current.beta);
       const dG = Math.abs(gamma - lastRef.current.gamma);
       lastRef.current = { beta, gamma };
@@ -155,33 +163,70 @@ const GyroText = () => {
       const intensity = dB + dG;
       const buf = bufferRef.current;
       buf.push(intensity);
-      if (buf.length > 40) buf.shift(); // ~0.6-0.8s rolling window
+      if (buf.length > 30) buf.shift();
       const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
 
-      const SHAKE_THRESHOLD = 12;
+      // Gentle rotation threshold — even small tilts (~5° movement) trigger it
+      const GENTLE_THRESHOLD = 3;
+      const isMoving = avg > GENTLE_THRESHOLD;
+      const now = Date.now();
 
-      if (avg > SHAKE_THRESHOLD) {
-        if (stateRef.current === 'scattered') {
-          // Any shake in scattered → snap back to idle
-          setGyroState('idle');
-          shakeStartRef.current = null;
-          bufferRef.current = [];
+      const current = stateRef.current;
+
+      if (current === 'idle') {
+        if (isMoving) {
+          // Start counting rotation time
+          if (!rotateStartRef.current) {
+            rotateStartRef.current = now;
+          } else if (now - rotateStartRef.current > 4000) {
+            // 4s of gentle rotation → transition to warning
+            setGyroState('warning');
+            rotateStartRef.current = null;
+            bufferRef.current = [];
+          }
         } else {
-          // In idle, accumulate shake time
-          if (!shakeStartRef.current) {
-            shakeStartRef.current = Date.now();
-          } else if (Date.now() - shakeStartRef.current > 4000) {
-            // 4 seconds of aggressive shaking → scatter!
+          rotateStartRef.current = null;
+        }
+      } else if (current === 'warning') {
+        if (isMoving) {
+          // Clear the calm timer — they're still shaking
+          if (calmTimerRef.current) {
+            calmTimerRef.current = null;
+          }
+          // Start counting for scattered transition
+          if (!warningShakeRef.current) {
+            warningShakeRef.current = now;
+          } else if (now - warningShakeRef.current > 2000) {
+            // Keep shaking for 2 more seconds in warning → scatter!
             setScattered(randomScatter());
             setGyroState('scattered');
-            shakeStartRef.current = null;
+            warningShakeRef.current = null;
+            calmTimerRef.current = null;
+            bufferRef.current = [];
+          }
+        } else {
+          warningShakeRef.current = null;
+          // Start calm timer — if they stay calm for 2s, go back to idle
+          if (!calmTimerRef.current) {
+            calmTimerRef.current = now;
+          } else if (now - calmTimerRef.current > 2000) {
+            setGyroState('idle');
+            calmTimerRef.current = null;
             bufferRef.current = [];
           }
         }
-      } else {
-        // Not shaking aggressively — reset timer
-        if (stateRef.current === 'idle') {
-          shakeStartRef.current = null;
+      } else if (current === 'scattered') {
+        if (isMoving) {
+          // Any shake in scattered → snap back to idle
+          if (!rotateStartRef.current) {
+            rotateStartRef.current = now;
+          } else if (now - rotateStartRef.current > 1000) {
+            setGyroState('idle');
+            rotateStartRef.current = null;
+            bufferRef.current = [];
+          }
+        } else {
+          rotateStartRef.current = null;
         }
       }
     };
@@ -189,6 +234,10 @@ const GyroText = () => {
     window.addEventListener('deviceorientation', onOrientation);
     return () => window.removeEventListener('deviceorientation', onOrientation);
   }, [hasGyro, permissionGranted]);
+
+  /* ── Choose which lines to show based on state ── */
+  const activeLines = gyroState === 'warning' ? WARNING_LINES : HERO_LINES;
+  const activeWords = activeLines.flatMap((l) => l.words);
 
   /* ── Render words ── */
   let wordIdx = 0;
@@ -198,29 +247,31 @@ const GyroText = () => {
       className="font-display text-5xl md:text-7xl lg:text-[7rem] font-black leading-[0.9] tracking-tighter mb-8 uppercase"
       onClick={!permissionGranted ? requestPermission : undefined}
     >
-      {HERO_LINES.map((line, li) => (
-        <React.Fragment key={li}>
+      {activeLines.map((line, li) => (
+        <React.Fragment key={`${gyroState}-${li}`}>
           {line.words.map((w) => {
             const idx = wordIdx++;
             const isScattered = gyroState === 'scattered';
 
-            // Per-word parallax factor (increases with index for depth)
+            // Per-word parallax factor
             const factor = (idx + 1) * 0.6;
             const idleX = hasGyro && permissionGranted ? orientation.gamma * factor : 0;
             const idleY = hasGyro && permissionGranted ? orientation.beta * factor * 0.3 : 0;
 
             return (
               <motion.span
-                key={idx}
+                key={`${gyroState}-${idx}`}
                 className={`inline-block ${w.special
                     ? 'text-transparent [-webkit-text-stroke:1px_#f0f0f0] hover:[-webkit-text-stroke:2px_#CCFF00] transition-all duration-300'
                     : ''
                   }`}
                 style={{ marginRight: '0.25em' }}
+                initial={{ opacity: 0, y: 20 }}
                 animate={{
-                  x: isScattered ? scattered[idx].x : idleX,
-                  y: isScattered ? scattered[idx].y : idleY,
-                  rotate: isScattered ? scattered[idx].rotate : 0,
+                  opacity: 1,
+                  x: isScattered ? scattered[idx]?.x ?? 0 : idleX,
+                  y: isScattered ? scattered[idx]?.y ?? 0 : idleY,
+                  rotate: isScattered ? scattered[idx]?.rotate ?? 0 : 0,
                 }}
                 transition={
                   isScattered
